@@ -1,6 +1,6 @@
-[setup] sandbox HOME = /tmp/sibyl_cap_bypass_poc_dowh65a3
-[setup] credentials.json written, account_id=52d56862..., tier=free
-[attack] tier_cache.json FORGED with cap_bytes=99,999,999,999
+[setup] sandbox HOME = /tmp/sibyl_cap_bypass_poc_7qawqe8d
+[setup] credentials.json written, account_id=40069df7..., tier=free
+[attack] tier_cache.json forged with cap_bytes=99,999,999,999
 [setup] MemoryClient built. Legit free cap = 2,097,152 bytes (2 MB)
 
 [exploit] writing 200 x 50KB entities ...
@@ -12,7 +12,7 @@
 
 [verify] cache cap_bytes after run:   99,999,999,999
 [verify] cache_token after run:       None
-[verify] cache mtime age:             2.3s
+[verify] cache mtime age:             1.8s
 [verify] cache file unchanged -> confirms no /check-write call ever happened
 
-[cleanup] sandbox to delete manually if desired: /tmp/sibyl_cap_bypass_poc_dowh65a3
+[cleanup] sandbox to delete manually if desired: /tmp/sibyl_cap_bypass_poc_7qawqe8d
