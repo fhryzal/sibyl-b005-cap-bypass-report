@@ -1,0 +1,21 @@
+[setup] sandbox HOME = /tmp/sibyl_tier_escalate_poc_v1qsohy1
+[setup] credentials.json: tier=free, account_id=1923f353...
+[attack] tier_cache.json forged: tier=lifetime, cap_bytes=None
+[setup] MemoryClient built with tier='free'
+[setup] client.get_tier() = 'free'
+[setup] client._effective_tier() = 'lifetime'  <- forged cache wins
+
+[setup] seeding journal entries for the learner...
+
+[exploit] calling client.learn() (paid-only feature)...
+[result] learn() SUCCEEDED -- report: LearningRunReport
+[!!] PAID FEATURE UNLOCKED for free-tier user
+
+[exploit] calling client.lint() (paid-only feature)...
+[result] lint() SUCCEEDED -- report: LintReport
+[!!] PAID FEATURE UNLOCKED for free-tier user
+
+[verify] cache tier after run:   'lifetime'
+[verify] cache_token after run:  None
+[verify] cache mtime age:        0.2s
+[verify] cache file unchanged -> confirms no /check-write call ever happened

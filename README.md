@@ -1,80 +1,62 @@
 # sibyl-b005
 
-Free-tier cap bypass on `sibyl-memory-client 0.4.15`.
+Two bypasses of `sibyl-memory-client` 0.4.15 that share one primitive: `~/.sibyl-memory/tier_cache.json` is an unsigned local file that the SDK trusts as the server-authoritative tier source.
 
-After `sibyl init`, you can edit `~/.sibyl-memory/tier_cache.json` to put any cap you want and the client trusts it. No network call, no exception. Tested writing 200 entities (~10 MB) past the 2 MB free cap with nothing complaining.
+1. **Cap bypass.** Set `cap_bytes` to a huge integer in the cache file. Write past the 2 MB free-tier cap with no network call. PoC writes 200 entities, DB at 10.25 MB (5.1x the cap), no exception.
+2. **Paid-feature unlock.** Set `tier` to `"lifetime"` in the cache file. `client.learn()` and `client.lint()` (paid-only) run for a free account.
 
-## The forge
-
-```json
-{
-  "account_id": "<your real account_id from credentials.json>",
-  "tier": "free",
-  "checked_at": <now epoch seconds>,
-  "cap_bytes": 99999999999,
-  "last_known_size": 0,
-  "grace_seconds": 604800,
-  "server_expires_at": null,
-  "cache_token": null
-}
-```
-
-That's it. Save the file, keep writing.
+The second one bypasses a fix the team shipped two days before this audit (commit `3824655`, the CORE-10 pre-launch audit at client 0.4.15). The team's own comment in `_effective_tier()` flags the fix as `SAFE-MINIMAL — see FLAG below`. This report shows the gap.
 
 ## Reproduce
 
 ```
 pip install sibyl-memory-client==0.4.15
-python3 sibyl_cap_bypass_poc.py
+python3 sibyl_cap_bypass_poc.py        # cap bypass
+python3 sibyl_tier_escalate_poc.py     # paid-feature unlock
 ```
 
-The script sandboxes its own `HOME` so it won't touch your real install.
+Both scripts sandbox their own `HOME` under `/tmp/`, so they won't interfere with a real install.
 
 ## What I saw
 
+Cap bypass:
+
 ```
-[exploit] writing 200 x 50KB entities ...
 [result] entities written: 200/200
-[result] final DB size:   10,743,808 bytes (10.25 MB)
+[result] final DB size:   10,661,888 bytes (10.17 MB)
 [result] past legit cap:   5.1x
 [result] *** FULL BYPASS *** zero CapExceededError raised
 [verify] cache file unchanged -> confirms no /check-write call ever happened
 ```
 
-## Why it works
+Paid-feature unlock:
 
-`CapGate.check()` in `_capcheck.py` around line 376:
-
-```python
-else:
-    # Cached as free with a cap. Enforce locally.
-    new_size = self._db_size_fn() + proposed_delta_bytes
-    if new_size <= cached.cap_bytes:
-        return
+```
+[setup] client.get_tier() = 'free'
+[setup] client._effective_tier() = 'lifetime'  <- forged cache wins
+[exploit] calling client.learn() (paid-only feature)...
+[result] learn() SUCCEEDED -- report: LearningRunReport
+[!!] PAID FEATURE UNLOCKED for free-tier user
+[exploit] calling client.lint() (paid-only feature)...
+[result] lint() SUCCEEDED -- report: LintReport
+[!!] PAID FEATURE UNLOCKED for free-tier user
 ```
 
-`cached.cap_bytes` comes straight off disk. If it's huge, the comparison passes forever and the server never gets called.
+## Root cause (short)
 
-The existing SEC-13 guard above this only handles the `(cap_bytes=None, account_id=None)` forge, which is when someone tries to spoof an uncapped paid grant on a never-activated account. The mirror case `(cap_bytes=<big int>, account_id=<real>)` isn't checked.
+`TierCache.load()` reads `tier_cache.json` and only shape-validates the fields. No signature check, no cross-reference against `credentials.json`. The `cache_token` field exists and was clearly meant for this, but it's only forwarded to the server on the next `/check-write` — and a forged cache stays "fresh" for 7 days, so that call never fires.
 
-Same gap in `_effective_cap_local()` around line 446, which is what `check_total_local()` uses inside the BEGIN IMMEDIATE write lock.
+Two downstream consumers trust the file:
+- `CapGate.check()` at `_capcheck.py:362-381` reads `cap_bytes` for the cap gate.
+- `MemoryClient._effective_tier()` at `client.py:749-780` reads `tier` for the paid-feature gate.
 
-The `cache_token` field looks like it was meant to be a tamper binding to `credentials.signature`, but it's only forwarded to the server on the next `/check-write`. Since the forged cache stays fresh, that call never fires.
+The SEC-13 guard added earlier covers `(cap_bytes=None, account_id=None)` but not the symmetric numeric shape or the `tier` field at all.
 
-## Fix ideas, cheapest first
-
-1. Bound the cached cap locally. Treat any cached `cap_bytes` that isn't `None` or `FREE_TIER_CAP_BYTES` as untrusted, fall through to `_refresh_and_check`. Default-server-issued caps for free users are always one of those two values.
-2. Cross-check `cache_token`. If `account_id` is set but `cache_token` is null, the entry didn't come from the server. Refuse it on read.
-3. HMAC the cache locally. Sign `(account_id, tier, cap_bytes, checked_at, server_expires_at)` with a key derived from `credentials.signature` at write time, verify on load.
-
-(1) is the smallest patch. (3) is the only one that fully closes the local-trust gap.
+Full writeup with code citations and four ranked fix suggestions is in `B005_SUBMISSION.md`.
 
 ## Files
 
-- `B005_SUBMISSION.md` — full writeup with code citations and severity argument
-- `sibyl_cap_bypass_poc.py` — reproducer
-- `poc_run_evidence.txt` — verbatim PoC output
-
-## Not covered
-
-Whether the next eventually-reaching `/check-write` call notices the size discrepancy and revokes. Can't tell without server access. The forge keeps the cache "fresh" for 7 days, so that call doesn't fire on its own — but it would fire if something invalidates the cache or the user crosses the cache TTL.
+- `B005_SUBMISSION.md` — full report
+- `sibyl_cap_bypass_poc.py` — cap bypass reproducer
+- `sibyl_tier_escalate_poc.py` — paid-feature unlock reproducer
+- `poc_run_evidence.txt`, `poc_run_evidence_tier_escalate.txt` — verbatim PoC output
